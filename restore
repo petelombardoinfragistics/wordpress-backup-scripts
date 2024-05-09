@@ -1,0 +1,154 @@
+#!/bin/bash
+END=$(grep -a -n -m6 "^exit" ${0} | tail -n 1 | cut -d':' -f1)
+START=$(grep -a -n -m2 "^#start$" ${0} | tail -n 1 | cut -d':' -f1)
+DIFF=$((END-START))
+FILE=${0}
+echo "#!/bin/bash" > restore
+chmod a+x restore
+echo "FILE=${0}" >> restore
+tail -n +$START $FILE | head -n $DIFF >> restore
+exec ./restore "$@"
+exit
+#start
+set +o history
+if [ -f $FILE ] && [ ! -L $FILE ]; then
+	END=$(grep -a -n -m6 "^exit" $FILE | tail -n 1 | cut -d':' -f1)
+	if [ ! "$END" == "" ]; then
+		LINES="1,$END"
+		sed "$LINES"'d' -i $FILE
+		mv $FILE $FILE.tar.gz
+		ln -s restore $FILE
+	fi
+fi
+ARCHIVE="$(pwd)/$FILE.tar.gz"
+if [ ! -f $ARCHIVE ]; then
+	echo "There's a problem.  $ARCHIVE is missing."
+	exit
+fi
+
+if [ -f /usr/bin/docker ]; then
+	CONTAINER=docker;
+elif [ -f /usr/bin/podman ]; then
+	CONTAINER=podman;
+else
+	echo "You need either docker or podman installed to continue."
+	exit
+fi
+
+function get_db_vars () {
+	YML="$1"
+	USER=$(grep MYSQL_USER $YML | cut -d':' -f2 | cut -d' ' -f2)
+	PASSWORD=$(grep MYSQL_PASSWORD $YML | cut -d':' -f2 | cut -d' ' -f2 | sed -e 's/"//g')
+	NAME=$(grep MYSQL_DATABASE $YML | cut -d':' -f2 | cut -d' ' -f2)
+	echo "$NAME:$USER:$PASSWORD"
+}
+
+function get_yml() {
+	FOLDER="$1"
+	find $FOLDER -maxdepth 2 -name '*-compose.y*ml' | grep "" -m1
+}
+
+function restore_wordpress() {
+	# Restore the files
+	ROOTFOLDER=$(dirname "/$(tar -tf $ARCHIVE | grep -E '*compose.yml|*compose.yaml')")
+	tar -zxvf $ARCHIVE -C / --exclude="*.mysql"
+
+	cd $ROOTFOLDER
+	$CONTAINER-compose up -d
+
+	# Start MySQL
+	echo "Waiting for MySQL to start"
+	count=0
+	while [ $count -lt 30 ]
+	do
+		echo -n "."
+		sleep 1
+		count=$((count+1))
+		if [ -d $ROOTFOLDER/db/wordpress ] && [ $count -lt 25 ]; then count=25; fi
+	done
+	echo
+}
+
+function restore_database() {
+	ROOTFOLDER=$(dirname "/$(tar -tf $ARCHIVE | grep -E '*compose.yml|*compose.yaml')")
+	BASE=$(basename $ROOTFOLDER)
+	tar -zxvf $ARCHIVE -C / --wildcards --no-anchored '*.mysql'
+	YML=$(get_yml ${ROOTFOLDER})
+	get_db_vars $YML
+	MYSQL_BACKUP=$(basename $(find ${ROOTFOLDER}/backups -type f -name "*.mysql" | grep -m1 ""))
+	if [ "MYSQL_BACKUP" == "" ]; then
+		echo "Error: no mysql backup found"
+		exit
+	fi
+	$CONTAINER exec -t ${BASE}_db_1 /bin/bash -c "set +o history; mariadb -u $USER -p\"$PASSWORD\" $NAME < /backups/${MYSQL_BACKUP}"
+}
+
+function help() {
+	echo "Usage: ./restore
+        -w | --wordpress	Restore Wordpress App
+        -d | --database		Restore DB
+        -a | --all		Restore Everything
+        -h | --help"
+        exit 2
+}
+function initialize_options() {
+        echo "intialize options: $@"
+        SHORT=w,d,a,h
+        LONG=wordpress,database,all,help
+        OPTS=$(getopt -a -n recovery --options $SHORT --longoptions $LONG -- "$@")
+        VALID_ARGUMENTS=$# # Returns the count of arguments that are in short or long options
+}
+function start_whiptail() {
+CHOICES=$(whiptail --title "WordPress Restore v1.0" --separate-output --checklist "Choose options" 15 40 8 \
+  "1" "Wordpress" OFF \
+  "2" "Database" OFF \
+  "3" "Everything" OFF \
+  "4" "Help" OFF \
+  3>&1 1>&2 2>&3)
+  ARGUMENTS=$(echo $CHOICES | tr -d '\n' | sed -e 's/1/-w/;s/2/-d/;s/3/-a/;s/4/-h/')
+  ARGUMENTS="$ARGUMENTS --"
+}
+initialize_options "$@"
+if [ "$VALID_ARGUMENTS" -eq 0 ]; then
+	if [ -f /usr/bin/whiptail ]; then
+	        start_whiptail
+	        OPTS="$ARGUMENTS"
+	else
+		help
+	fi
+fi
+eval set -- "$OPTS"
+while :
+do
+        case "$1" in
+        -w | --wordpress )
+                echo "Restoring Wordpress"
+                restore_wordpress
+                shift
+                ;;
+        -d | --database )
+                echo "Restoring The Database"
+                restore_database
+                shift
+                ;;
+        -a | --all )
+                echo "Deploying Everything"
+		restore_wordpress
+		restore_database
+                shift
+                ;;
+        -h | --help)
+		help
+		shift
+                ;;
+        -- )
+                shift
+                break
+                ;;
+        *)
+                echo "Unexpected option: $1"
+                ;;
+        esac
+done
+echo "RESTORE COMPLETE!"
+exit

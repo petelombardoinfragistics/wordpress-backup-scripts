@@ -1,0 +1,76 @@
+#!/bin/bash
+
+ROOTFOLDER=$(dirname $(dirname $(realpath $0)))
+
+export PATH=$PATH:/usr/bin:/usr/sbin:/sbin:/bin
+
+if [ -f /usr/bin/docker ]; then
+	CTYPE="docker"
+elif [ -f /usr/bin/podman ]; then
+	CTYPE="podman"
+else
+	echo "You need either docker or podman installed."
+	exit
+fi
+
+#cd /backups/
+
+KEEPDAYS=2
+
+DATE=$(date +'%Y%m%d')
+
+function get_db_vars () {
+	YML="$1"
+	USER=$(grep MYSQL_USER $YML | cut -d':' -f2 | cut -d' ' -f2)
+	PASSWORD=$(grep MYSQL_PASSWORD $YML | cut -d':' -f2 | cut -d' ' -f2)
+	NAME=$(grep MYSQL_DATABASE $YML | cut -d':' -f2 | cut -d' ' -f2)
+	echo "$NAME:$USER:$PASSWORD"
+}
+
+function get_yml() {
+	FOLDER="$1"
+	find $FOLDER -maxdepth 2 -name '*-compose.y*ml' | grep "" -m1
+}
+
+function backup_wordpress() {
+	FOLDER=$1
+	BASE=$(basename $FOLDER)
+	echo $FOLDER
+	echo "Backing up $BASE"
+	if [ -d $FOLDER ]; then
+		VARS=$(get_db_vars $(get_yml $FOLDER))
+		DB=$(echo $VARS | cut -d':' -f1)
+		USER=$(echo $VARS | cut -d':' -f2)
+		PASS=$(echo $VARS | cut -d':' -f3 | sed -e 's/"//g')
+		DBCONTAINER=$($CTYPE ps | grep -E "${BASE}[_-]db[_-]1" | cut -d' ' -f1)
+		BCMD=$(echo $CTYPE exec $DBCONTAINER /backups/backup-mysql ${DB} ${USER} ${PASS})
+		$BCMD
+		cd $FOLDER
+		tar -cvz $FOLDER/backups/wordpress-$DATE.mysql --exclude=updraft --exclude=backups/*.tar.gz --exclude=ai1wm-backups --exclude=cache/$BASE --exclude=cache/nginx/* --exclude=*runme* --exclude=db/* --exclude=cache/www/* --exclude=cache/nginx/* $FOLDER  > $FOLDER/backups/$BASE-$DATE.tar.gz
+		for FILE in $(find $FOLDER/backups/$BASE* -name "*.mysql" | sort | head -n -4)
+		do
+			echo rm -v $FILE
+		done
+
+	fi
+	cat $FOLDER/backups/restore | grep -v "^$" > $FOLDER/backups/$DATE-runme-$BASE
+	cat $FOLDER/backups/$BASE-$DATE.tar.gz >> $FOLDER/backups/$DATE-runme-$BASE
+	chmod a+x $FOLDER/backups/$DATE-runme-$BASE
+	rm $FOLDER/backups/$BASE-$DATE.tar.gz
+	if [ -f $FOLDER/backups/wordpress-$DATE.mysql ]; then
+		rm $FOLDER/backups/wordpress-$DATE.mysql
+	fi
+}
+
+if [ ! "$ROOTFOLDER" == "" ] && [ -d "$ROOTFOLDER" ]; then
+	backup_wordpress $ROOTFOLDER
+fi
+
+# Cleanup
+# Only keep the latest copy of the backup
+# The intention is that archives will be stored offsite
+
+for i in $(find $ROOTFOLDER/backups -name "*-runme-*" | sort -n -r | tail -n +2)
+do
+	rm -f $i
+done

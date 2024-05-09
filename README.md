@@ -6,7 +6,7 @@ These backup scripts are intended to facilitate the backups of Wordpress sites r
 
     `mkdir /opt/docker/test/backup`
   
-    `cp backup restore /opt/docker/test/backup`
+    `cp backup restore /opt/docker/test/backup/`
 
     `crontab -l > crontab`
 

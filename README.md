@@ -14,4 +14,4 @@
 
 **restore**
 
-* Used as part of the backup script to create a self-executable restore archive. This is the logic that does the self-extraction AND handles the restore itself.
+* Used as part of the backup script to create a self-executable restore archive. This is the logic that does the self-extraction AND handles the restore itself.  You do not run this, it's only used by the backup script to create the archive.

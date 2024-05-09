@@ -1,3 +1,5 @@
+These backup scripts are intended to facilitate the backups of Wordpress sites running in docker or podman containers.   Upon running the backup script, a self-executing backup archive is created that can be run on another host to perform a semi-automated restore of the site in just seconds (depending on the size of the site's data).
+
 **backup**
 
 * This is the backup script. Add this to a folder named backup, inside the container's folder, and add it to cron. For example, if your container is in /opt/docker/test, then you would do the following:

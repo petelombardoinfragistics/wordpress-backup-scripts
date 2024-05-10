@@ -2,17 +2,23 @@ These backup scripts are intended to facilitate the backups of Wordpress sites r
 
 **backup**
 
-* This is the backup script. Add this to a folder named backup, inside the container's folder, and add it to cron. For example, if your container is in /opt/docker/test, then you would do the following:
+* This is the backup script. Add this to a folder named backups, inside the container's folder, and add it to cron. For example, if your container is in /opt/docker/test, then you would do the following:
 
-    `mkdir /opt/docker/test/backup`
+    `mkdir /opt/docker/test/backups`
   
-    `cp backup restore /opt/docker/test/backup/`
+    `cp backup restore /opt/docker/test/backups/`
 
     `crontab -l > crontab`
 
     `echo "00 00 * * * /opt/docker/test/backup/backup" >> crontab`
 
     `crontab crontab`
+
+  Note: You must also pass the backups folder to the mysql/mariadb container by adding something like this to your docker-compose.yml or podman-compose.yml file:
+
+  `    volumes:`
+
+  `      - /opt/docker/test/backups:/backups`
 
 **restore**
 
